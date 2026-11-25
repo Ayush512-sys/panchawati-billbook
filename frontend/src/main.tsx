@@ -8,12 +8,12 @@ import { useAuthStore } from './store/useAuthStore'
 
 const queryClient = new QueryClient()
 
-// Unregister any active service workers to ensure users get the latest code
+// Register PWA service worker for full offline support
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.getRegistrations().then(function(registrations) {
-    for(let registration of registrations) {
-      registration.unregister();
-    }
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch((err) => {
+      console.log('PWA Service Worker registration:', err);
+    });
   });
 }
 
@@ -22,7 +22,6 @@ axios.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response && error.response.status === 401) {
-      // If unauthorized (token expired), clear the store and reload to prompt login
       useAuthStore.getState().logout();
       window.location.href = '/login';
     }

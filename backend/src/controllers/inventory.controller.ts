@@ -60,6 +60,24 @@ export const createProduct = async (req: Request, res: Response) => {
     if (!data.code || data.code.trim() === '') {
       data.code = `ITEM-${Math.floor(Math.random() * 1000000)}`;
     }
+
+    // Validate or auto-resolve category_id to prevent foreign key violation
+    let catId = parseInt(data.category_id);
+    if (!catId || isNaN(catId)) {
+      const firstCat = await prisma.category.findFirst();
+      catId = firstCat ? firstCat.id : 1;
+    } else {
+      const exists = await prisma.category.findUnique({ where: { id: catId } });
+      if (!exists) {
+        const firstCat = await prisma.category.findFirst();
+        catId = firstCat ? firstCat.id : catId;
+      }
+    }
+    data.category_id = catId;
+    data.purchase_price = parseFloat(data.purchase_price) || 0;
+    data.selling_price = parseFloat(data.selling_price) || 0;
+    data.min_stock = parseInt(data.min_stock) || 5;
+
     const product = await prisma.product.create({ data });
     res.status(201).json(product);
   } catch (error: any) { 

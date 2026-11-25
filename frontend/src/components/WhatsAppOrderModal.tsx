@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Plus, Trash2, Send, Search, Building2, Package } from 'lucide-react';
+import { X, Plus, Trash2, Send, Search, Building2, Package, Phone } from 'lucide-react';
 import { useDataStore } from '../store/useDataStore';
 import api from '../api';
 
@@ -28,6 +28,8 @@ export default function WhatsAppOrderModal({
   const { products } = useDataStore();
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
+  const [manualPhone, setManualPhone] = useState<string>('');
+  const [manualSupplierName, setManualSupplierName] = useState<string>('');
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
   const [itemSearch, setItemSearch] = useState('');
   const [customNote, setCustomNote] = useState('');
@@ -38,16 +40,22 @@ export default function WhatsAppOrderModal({
       // Fetch suppliers
       api.get('/billing/suppliers')
         .then(res => {
-          setSuppliers(res.data);
+          setSuppliers(res.data || []);
           if (initialSupplier) {
-            setSelectedSupplierId(initialSupplier.id.toString());
-          } else if (res.data.length > 0) {
+            setSelectedSupplierId(initialSupplier.id?.toString() || '');
+            if (initialSupplier.mobile) setManualPhone(initialSupplier.mobile);
+            if (initialSupplier.name) setManualSupplierName(initialSupplier.name);
+          } else if (res.data && res.data.length > 0) {
             setSelectedSupplierId(res.data[0].id.toString());
+            if (res.data[0].mobile) setManualPhone(res.data[0].mobile);
+            if (res.data[0].name) setManualSupplierName(res.data[0].name);
           }
         })
-        .catch(console.error);
+        .catch(err => {
+          console.warn('Could not fetch suppliers online, using manual entry', err);
+        });
 
-      // Pre-fill initial items (e.g. from low stock)
+      // Pre-fill initial items (e.g. from low stock or single item)
       if (initialItems && initialItems.length > 0) {
         const formatted: OrderItem[] = initialItems.map(p => {
           const totalQty = p.inventory?.reduce((sum: number, inv: any) => sum + inv.quantity, 0) || 0;
@@ -55,10 +63,10 @@ export default function WhatsAppOrderModal({
           return {
             id: p.id,
             name: p.name,
-            code: p.code,
+            code: p.code || p.item_code,
             currentStock: totalQty,
             orderQty: reorderQty,
-            unit: p.unit || 'pcs'
+            unit: p.unit || p.measuring_unit || 'pcs'
           };
         });
         setOrderItems(formatted);
@@ -70,7 +78,23 @@ export default function WhatsAppOrderModal({
 
   if (!isOpen) return null;
 
-  const currentSupplier = suppliers.find(s => s.id.toString() === selectedSupplierId) || initialSupplier;
+  const currentSupplier = suppliers.find(s => s.id?.toString() === selectedSupplierId) || initialSupplier;
+  const effectiveSupplierName = manualSupplierName.trim() || currentSupplier?.name || 'Wholesaler / Distributor';
+  const effectivePhone = manualPhone.trim() || currentSupplier?.mobile || '';
+
+  const handleSupplierSelect = (supId: string) => {
+    setSelectedSupplierId(supId);
+    if (!supId) {
+      setManualSupplierName('');
+      setManualPhone('');
+      return;
+    }
+    const found = suppliers.find(s => s.id?.toString() === supId);
+    if (found) {
+      setManualSupplierName(found.name || '');
+      setManualPhone(found.mobile || '');
+    }
+  };
 
   const handleAddItem = (prod: any) => {
     if (orderItems.some(i => i.id === prod.id)) return;
@@ -80,10 +104,10 @@ export default function WhatsAppOrderModal({
       {
         id: prod.id,
         name: prod.name,
-        code: prod.code,
+        code: prod.code || prod.item_code,
         currentStock: totalQty,
-        orderQty: 10,
-        unit: prod.unit || 'pcs'
+        orderQty: Math.max(prod.min_stock ? prod.min_stock * 2 : 10, 5),
+        unit: prod.unit || prod.measuring_unit || 'pcs'
       }
     ]);
     setItemSearch('');
@@ -101,8 +125,8 @@ export default function WhatsAppOrderModal({
     const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
     let msg = `*PURCHASE ORDER - PANCHAWATI AUTOMOBILES*\n`;
     msg += `📅 Date: ${today}\n`;
-    if (currentSupplier) {
-      msg += `🏢 To: ${currentSupplier.name}\n`;
+    if (effectiveSupplierName) {
+      msg += `🏢 To: ${effectiveSupplierName}\n`;
     }
     if (urgency === 'Urgent') {
       msg += `⚡ Priority: *URGENT REQUIREMENT*\n`;
@@ -122,13 +146,13 @@ export default function WhatsAppOrderModal({
 
     msg += `----------------------------------------\n`;
     msg += `📍 Delivery: Panchawati Automobiles, Main Shop\n`;
-    msg += `Please confirm availability and estimated dispatch time. Thank you!`;
+    msg += `Please confirm order receipt & dispatch ETA. Thank you!`;
     return msg;
   };
 
   const handleSendWhatsApp = () => {
-    if (!currentSupplier || !currentSupplier.mobile) {
-      alert('Please select a supplier with a valid mobile number.');
+    if (!effectivePhone.trim()) {
+      alert('Please enter or select a wholesaler WhatsApp phone number.');
       return;
     }
     if (orderItems.length === 0) {
@@ -136,7 +160,7 @@ export default function WhatsAppOrderModal({
       return;
     }
 
-    let phone = currentSupplier.mobile.replace(/\D/g, '');
+    let phone = effectivePhone.replace(/\D/g, '');
     if (phone.length === 10) phone = '91' + phone;
 
     const message = generateWhatsAppMessage();
@@ -154,7 +178,7 @@ export default function WhatsAppOrderModal({
 
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-white dark:bg-zinc-900 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden border border-gray-200 dark:border-zinc-800 flex flex-col max-h-[90vh]">
+      <div className="bg-white dark:bg-zinc-900 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden border border-gray-200 dark:border-zinc-800 flex flex-col max-h-[92vh]">
         
         {/* Modal Header */}
         <div className="px-6 py-4 border-b border-gray-200 dark:border-zinc-800 flex justify-between items-center bg-gray-50 dark:bg-zinc-800/50">
@@ -164,7 +188,7 @@ export default function WhatsAppOrderModal({
             </div>
             <div>
               <h3 className="text-lg font-bold text-gray-900 dark:text-white">Order to Wholesaler on WhatsApp</h3>
-              <p className="text-xs text-gray-500 dark:text-zinc-400">Generate and send purchase requirements directly</p>
+              <p className="text-xs text-gray-500 dark:text-zinc-400">Send purchase requirements directly via WhatsApp</p>
             </div>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-white p-1 rounded-lg">
@@ -173,42 +197,71 @@ export default function WhatsAppOrderModal({
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 overflow-y-auto flex-1 space-y-5 custom-scrollbar">
+        <div className="p-6 overflow-y-auto flex-1 space-y-4 custom-scrollbar">
           
-          {/* Supplier Selector & Priority */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-semibold text-gray-700 dark:text-zinc-300 mb-1.5 uppercase tracking-wider">
-                Select Wholesaler / Supplier *
-              </label>
-              <div className="relative">
+          {/* Supplier Selector & Phone */}
+          <div className="bg-gray-50 dark:bg-zinc-800/50 p-4 rounded-xl border border-gray-200 dark:border-zinc-700/60 space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 dark:text-zinc-300 mb-1 uppercase tracking-wider">
+                  Select Saved Wholesaler / Supplier
+                </label>
                 <select
                   value={selectedSupplierId}
-                  onChange={e => setSelectedSupplierId(e.target.value)}
-                  className="w-full pl-3 pr-8 py-2.5 border border-gray-300 dark:border-zinc-700 rounded-lg dark:bg-zinc-800 dark:text-white text-sm font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  onChange={e => handleSupplierSelect(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-zinc-700 rounded-lg dark:bg-zinc-800 dark:text-white text-sm font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                 >
+                  <option value="">-- Choose or enter manually below --</option>
                   {suppliers.map(s => (
                     <option key={s.id} value={s.id}>
-                      {s.name} ({s.mobile || 'No Mobile'})
+                      {s.name} {s.mobile ? `(${s.mobile})` : ''}
                     </option>
                   ))}
-                  {suppliers.length === 0 && <option value="">No suppliers found</option>}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 dark:text-zinc-300 mb-1 uppercase tracking-wider">
+                  Priority
+                </label>
+                <select
+                  value={urgency}
+                  onChange={e => setUrgency(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-zinc-700 rounded-lg dark:bg-zinc-800 dark:text-white text-sm font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                >
+                  <option value="Normal">Normal Order</option>
+                  <option value="Urgent">⚡ Urgent Dispatch</option>
                 </select>
               </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-gray-700 dark:text-zinc-300 mb-1.5 uppercase tracking-wider">
-                Priority
-              </label>
-              <select
-                value={urgency}
-                onChange={e => setUrgency(e.target.value)}
-                className="w-full px-3 py-2.5 border border-gray-300 dark:border-zinc-700 rounded-lg dark:bg-zinc-800 dark:text-white text-sm font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-              >
-                <option value="Normal">Normal Order</option>
-                <option value="Urgent">⚡ Urgent Dispatch</option>
-              </select>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 dark:text-zinc-300 mb-1 uppercase tracking-wider">
+                  Wholesaler / Supplier Name
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. M.K. Spares / National Auto"
+                  value={manualSupplierName}
+                  onChange={e => setManualSupplierName(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-zinc-700 rounded-lg dark:bg-zinc-800 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 dark:text-zinc-300 mb-1 uppercase tracking-wider flex items-center">
+                  <Phone className="w-3.5 h-3.5 mr-1 text-green-600" />
+                  WhatsApp Mobile Number *
+                </label>
+                <input
+                  type="tel"
+                  placeholder="10-digit number (e.g. 9822012345)"
+                  value={manualPhone}
+                  onChange={e => setManualPhone(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-zinc-700 rounded-lg dark:bg-zinc-800 dark:text-white text-sm font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+              </div>
             </div>
           </div>
 
@@ -268,11 +321,11 @@ export default function WhatsAppOrderModal({
             </div>
 
             {orderItems.length === 0 ? (
-              <div className="p-8 text-center border-2 border-dashed border-gray-200 dark:border-zinc-800 rounded-xl text-gray-400 text-sm">
-                No items added yet. Search above or select low-stock items.
+              <div className="p-6 text-center border-2 border-dashed border-gray-200 dark:border-zinc-800 rounded-xl text-gray-400 text-sm">
+                No items added yet. Search above to add items.
               </div>
             ) : (
-              <div className="border border-gray-200 dark:border-zinc-800 rounded-xl overflow-hidden divide-y divide-gray-100 dark:divide-zinc-800">
+              <div className="border border-gray-200 dark:border-zinc-800 rounded-xl overflow-hidden divide-y divide-gray-100 dark:divide-zinc-800 max-h-52 overflow-y-auto">
                 {orderItems.map((item, idx) => (
                   <div key={item.id} className="p-3 bg-white dark:bg-zinc-800/40 flex items-center justify-between gap-3">
                     <div className="flex-1 min-w-0">
@@ -285,7 +338,7 @@ export default function WhatsAppOrderModal({
                     </div>
 
                     <div className="flex items-center space-x-2">
-                      <span className="text-xs text-gray-500 dark:text-zinc-400 font-medium">Order Qty:</span>
+                      <span className="text-xs text-gray-500 dark:text-zinc-400 font-medium">Qty:</span>
                       <input
                         type="number"
                         min="1"
@@ -326,7 +379,7 @@ export default function WhatsAppOrderModal({
             <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-400 block mb-1">
               WhatsApp Message Preview:
             </span>
-            <pre className="text-xs text-emerald-900 dark:text-emerald-300 font-mono whitespace-pre-wrap max-h-32 overflow-y-auto">
+            <pre className="text-xs text-emerald-900 dark:text-emerald-300 font-mono whitespace-pre-wrap max-h-28 overflow-y-auto">
               {generateWhatsAppMessage()}
             </pre>
           </div>
@@ -344,7 +397,7 @@ export default function WhatsAppOrderModal({
           <button
             type="button"
             onClick={handleSendWhatsApp}
-            disabled={orderItems.length === 0 || !currentSupplier?.mobile}
+            disabled={orderItems.length === 0 || !effectivePhone.trim()}
             className="px-5 py-2 bg-[#25D366] hover:bg-[#128C7E] text-white rounded-lg text-sm font-bold shadow-md transition-colors flex items-center disabled:opacity-50"
           >
             <Send className="w-4 h-4 mr-2" />

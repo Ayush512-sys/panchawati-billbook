@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import api from '../api';
 import { useAuthStore } from '../store/useAuthStore';
+import { useDataStore } from '../store/useDataStore';
 import { X, Search, ChevronDown, CheckSquare, Square, Info, Plus, FileText as FileTextIcon, Archive as ArchiveIcon, Tag as TagIcon, LayoutGrid as MenuSquareIcon } from 'lucide-react';
 
 interface CreateItemModalProps {
@@ -12,6 +13,7 @@ interface CreateItemModalProps {
 
 export default function CreateItemModal({ isOpen, onClose, onItemCreated, existingProducts = [] }: CreateItemModalProps) {
   const token = useAuthStore(state => state.token);
+  const { categories: storeCategories, products: storeProducts, setProducts } = useDataStore();
   
   const initialFormState = {
     name: '',
@@ -42,24 +44,33 @@ export default function CreateItemModal({ isOpen, onClose, onItemCreated, existi
     const fetchCategories = async () => {
       try {
         const res = await api.get(`/inventory/categories`);
-        setCategories(res.data);
-        if (res.data.length > 0 && !formData.category_id) {
-          setFormData(prev => ({ ...prev, category_id: res.data[0].id.toString() }));
+        if (res.data && res.data.length > 0) {
+          setCategories(res.data);
+          if (!formData.category_id) {
+            setFormData(prev => ({ ...prev, category_id: res.data[0].id.toString() }));
+          }
+          return;
         }
       } catch (err) {
-        console.error('Failed to fetch categories', err);
+        console.warn('Failed to fetch categories online, checking store:', err);
+      }
+      if (storeCategories.length > 0) {
+        setCategories(storeCategories);
+        if (!formData.category_id) {
+          setFormData(prev => ({ ...prev, category_id: storeCategories[0].id.toString() }));
+        }
       }
     };
     if (isOpen) {
       fetchCategories();
     }
-  }, [isOpen]);
+  }, [isOpen, storeCategories]);
 
   if (!isOpen) return null;
 
   // Derive suggested brands based on selected category
   const suggestedBrands = Array.from(new Set(
-    existingProducts
+    (existingProducts.length > 0 ? existingProducts : storeProducts)
       .filter(p => formData.category_id ? p.category_id?.toString() === formData.category_id.toString() : true)
       .map(p => p.brand)
       .filter(Boolean)
@@ -67,61 +78,73 @@ export default function CreateItemModal({ isOpen, onClose, onItemCreated, existi
 
   const handleSubmit = async (e?: React.FormEvent, isSaveAndNew = false) => {
     if (e) e.preventDefault();
+    if (!formData.name.trim()) {
+      setError('Item Name is required');
+      return;
+    }
     setLoading(true);
     setError('');
     
     try {
-      let categoryId = formData.category_id ? parseInt(formData.category_id) : 1;
-      if (!formData.category_id) {
-        try {
-          const catRes = await api.get(`/inventory/categories`);
-          if (catRes.data.length > 0) categoryId = catRes.data[0].id;
-          else {
-            const newCat = await api.post(`/inventory/categories`, {
-              name: 'General', description: 'Default category'
-            });
-            categoryId = newCat.data.id;
-          }
-        } catch (e) {
-          console.error("Category fetch failed", e);
-        }
-      }
+      const activeCats = categories.length > 0 ? categories : storeCategories;
+      const categoryId = formData.category_id ? parseInt(formData.category_id) : (activeCats[0]?.id || 181);
+      const generatedCode = formData.code.trim() || `ITEM-${Math.floor(100000 + Math.random() * 900000)}`;
 
-      const productRes = await api.post(`/inventory/products`, {
-        name: formData.name,
-        code: formData.code,
-        brand: formData.brand,
-        oem_number: formData.oem_number,
-        vehicle_compatibility: formData.vehicle_compatibility,
-        unit: formData.unit.split('(')[0] || 'PCS',
+      const newProdData = {
+        name: formData.name.trim(),
+        code: generatedCode,
+        brand: formData.brand.trim() || undefined,
+        oem_number: formData.oem_number.trim() || undefined,
+        vehicle_compatibility: formData.vehicle_compatibility.trim() || undefined,
+        unit: formData.unit.split('(')[0].trim() || 'PCS',
         purchase_price: parseFloat(formData.purchase_price) || 0,
         selling_price: parseFloat(formData.selling_price) || 0,
         min_stock: parseInt(formData.min_stock) || 5,
         category_id: categoryId
-      });
-      
-      const initialStockNum = parseInt(formData.opening_stock);
-      if (initialStockNum > 0) {
-        let locationId = 1;
+      };
+
+      let createdProduct: any = null;
+
+      if (navigator.onLine) {
         try {
-          const locRes = await api.get(`/inventory/locations`);
-          if (locRes.data.length > 0) locationId = locRes.data[0].id;
-          else {
-            const newLoc = await api.post(`/inventory/locations`, { name: 'Main Godown', type: 'Main Shop' });
-            locationId = newLoc.data.id;
+          const productRes = await api.post(`/inventory/products`, newProdData);
+          createdProduct = productRes.data;
+
+          const initialStockNum = parseInt(formData.opening_stock);
+          if (initialStockNum > 0) {
+            try {
+              await api.post(`/inventory/stock/adjust`, {
+                product_id: createdProduct.id,
+                location_id: 1,
+                quantity: initialStockNum,
+                action: 'Increase',
+                reason: 'Opening Stock'
+              });
+            } catch (err) {
+              console.warn('Opening stock adjustment failed', err);
+            }
           }
-          await api.post(`/inventory/stock/adjust`, {
-            product_id: productRes.data.id,
-            location_id: locationId,
-            quantity: initialStockNum,
-            action: 'Increase',
-            reason: 'Opening Stock'
-          });
-        } catch (err) {
-          console.error("Opening stock failed", err);
+        } catch (netErr: any) {
+          console.warn('Online product creation failed, saving locally:', netErr);
         }
       }
-      
+
+      if (!createdProduct) {
+        // Fallback for offline creation
+        const matchedCat = activeCats.find(c => c.id === categoryId) || { id: categoryId, name: 'General' };
+        createdProduct = {
+          ...newProdData,
+          id: -Date.now(),
+          category: matchedCat,
+          inventory: [{ quantity: parseInt(formData.opening_stock) || 0, location_id: 1 }],
+          is_offline: true
+        };
+      }
+
+      // Update in-memory data store immediately
+      const currentList = storeProducts.length > 0 ? storeProducts : existingProducts;
+      setProducts([createdProduct, ...currentList]);
+
       onItemCreated();
       
       if (isSaveAndNew) {
@@ -130,7 +153,7 @@ export default function CreateItemModal({ isOpen, onClose, onItemCreated, existi
         onClose();
       }
     } catch (err: any) {
-      setError(err.response?.data?.message || err.message || 'Failed to create item');
+      setError(err.response?.data?.error || err.response?.data?.message || err.message || 'Failed to create item');
     } finally {
       setLoading(false);
     }
@@ -180,7 +203,7 @@ export default function CreateItemModal({ isOpen, onClose, onItemCreated, existi
           </div>
 
           {/* Form Content */}
-          <div className="flex-1 overflow-y-auto p-8">
+          <div className="flex-1 overflow-y-auto p-6 md:p-8">
             {error && <div className="mb-6 rounded-md bg-red-50 p-4 text-sm text-red-700 dark:bg-red-900/30 dark:text-red-400">{error}</div>}
             
             {activeTab === 'Basic Details' && (
@@ -334,7 +357,11 @@ export default function CreateItemModal({ isOpen, onClose, onItemCreated, existi
                         value={formData.code}
                         onChange={e => setFormData({...formData, code: e.target.value})}
                       />
-                      <button type="button" className="text-sm text-blue-600 hover:text-blue-700 whitespace-nowrap px-2 font-medium">Generate Barcode</button>
+                      <button 
+                        type="button" 
+                        onClick={() => setFormData({...formData, code: `ITM${Math.floor(100000 + Math.random() * 900000)}`})}
+                        className="text-sm text-blue-600 hover:text-blue-700 whitespace-nowrap px-2 font-medium"
+                      >Generate Code</button>
                     </div>
                   </div>
                   <div>
@@ -344,7 +371,6 @@ export default function CreateItemModal({ isOpen, onClose, onItemCreated, existi
                       className="block w-full rounded-lg border border-gray-300 bg-white p-2.5 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
                       placeholder="ex: 4010"
                     />
-                    <button type="button" className="text-sm text-blue-600 hover:text-blue-700 mt-1 font-medium block">Find HSN Code</button>
                   </div>
                 </div>
 
@@ -352,20 +378,26 @@ export default function CreateItemModal({ isOpen, onClose, onItemCreated, existi
                   <div>
                     <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">Measuring Unit</label>
                     <div className="relative">
-                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <Search className="h-4 w-4 text-gray-400" />
-                      </div>
-                      <select className="block w-full appearance-none rounded-lg border border-gray-300 bg-white p-2.5 pl-9 pr-8 text-sm text-gray-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-gray-300"
+                      <select className="block w-full appearance-none rounded-lg border border-gray-300 bg-white p-2.5 pr-8 text-sm text-gray-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-gray-300"
                         value={formData.unit} onChange={e => setFormData({...formData, unit: e.target.value})}>
                         <option>Pieces(PCS)</option>
                         <option>Numbers(NOS)</option>
+                        <option>Sets(SET)</option>
                         <option>Kilograms(KG)</option>
+                        <option>Liters(LTR)</option>
                       </select>
                       <ChevronDown className="absolute right-3 top-2.5 h-4 w-4 text-gray-400 pointer-events-none" />
                     </div>
-                    <button type="button" className="text-sm text-blue-600 hover:text-blue-700 mt-2 font-medium flex items-center">
-                      <Plus className="w-3 h-3 mr-1" /> Alternative Unit
-                    </button>
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">Low Stock Alert Quantity</label>
+                    <input
+                      type="number"
+                      className="block w-full rounded-lg border border-gray-300 bg-white p-2.5 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
+                      placeholder="5"
+                      value={formData.min_stock}
+                      onChange={e => setFormData({...formData, min_stock: e.target.value})}
+                    />
                   </div>
                 </div>
 
@@ -376,7 +408,7 @@ export default function CreateItemModal({ isOpen, onClose, onItemCreated, existi
                       <input
                         type="number"
                         className="block w-full min-w-0 flex-1 rounded-l-lg border border-gray-300 p-2.5 text-sm focus:border-indigo-500 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
-                        placeholder="ex: 150"
+                        placeholder="ex: 15"
                         value={formData.opening_stock}
                         onChange={e => setFormData({...formData, opening_stock: e.target.value})}
                       />
@@ -387,29 +419,12 @@ export default function CreateItemModal({ isOpen, onClose, onItemCreated, existi
                   </div>
                   <div>
                     <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">As of Date</label>
-                    <div className="relative">
-                      <input
-                        type="date"
-                        className="block w-full rounded-lg border border-gray-300 bg-white p-2.5 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
-                        defaultValue={new Date().toISOString().split('T')[0]}
-                      />
-                    </div>
+                    <input
+                      type="date"
+                      className="block w-full rounded-lg border border-gray-300 bg-white p-2.5 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
+                      defaultValue={new Date().toISOString().split('T')[0]}
+                    />
                   </div>
-                </div>
-
-                <div>
-                  <button type="button" className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center">
-                    <Plus className="w-3 h-3 mr-1" /> Enable Low stock quantity warning <Info className="w-4 h-4 ml-1 text-gray-400" />
-                  </button>
-                </div>
-
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">Description</label>
-                  <textarea
-                    rows={3}
-                    className="block w-full rounded-lg border border-gray-300 bg-white p-2.5 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
-                    placeholder="Enter Description"
-                  ></textarea>
                 </div>
               </form>
             )}
@@ -418,7 +433,7 @@ export default function CreateItemModal({ isOpen, onClose, onItemCreated, existi
               <form className="space-y-6" onSubmit={e => handleSubmit(e, false)}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
                   <div>
-                    <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">Sales Price</label>
+                    <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">Sales Price (₹)</label>
                     <div className="flex relative">
                       <span className="inline-flex items-center px-3 rounded-l-lg border border-r-0 border-gray-300 bg-gray-50 text-gray-500 sm:text-sm dark:border-zinc-700 dark:bg-zinc-800">
                         ₹
@@ -438,7 +453,7 @@ export default function CreateItemModal({ isOpen, onClose, onItemCreated, existi
                     </div>
                   </div>
                   <div>
-                    <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">Purchase Price</label>
+                    <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">Purchase Price (₹)</label>
                     <div className="flex relative">
                       <span className="inline-flex items-center px-3 rounded-l-lg border border-r-0 border-gray-300 bg-gray-50 text-gray-500 sm:text-sm dark:border-zinc-700 dark:bg-zinc-800">
                         ₹
@@ -447,7 +462,7 @@ export default function CreateItemModal({ isOpen, onClose, onItemCreated, existi
                         type="number"
                         step="0.01"
                         className="block w-full min-w-0 flex-1 border border-gray-300 p-2.5 text-sm focus:border-indigo-500 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
-                        placeholder="ex: 200"
+                        placeholder="ex: 150"
                         value={formData.purchase_price}
                         onChange={e => setFormData({...formData, purchase_price: e.target.value})}
                       />
@@ -463,10 +478,7 @@ export default function CreateItemModal({ isOpen, onClose, onItemCreated, existi
                   <div>
                     <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">GST Tax Rate(%)</label>
                     <div className="relative">
-                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <Search className="h-4 w-4 text-gray-400" />
-                      </div>
-                      <select className="block w-full appearance-none rounded-lg border border-gray-300 bg-white p-2.5 pl-9 pr-8 text-sm text-gray-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-gray-300">
+                      <select className="block w-full appearance-none rounded-lg border border-gray-300 bg-white p-2.5 pr-8 text-sm text-gray-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-gray-300">
                         <option>None</option>
                         <option>0%</option>
                         <option>5%</option>
@@ -475,19 +487,6 @@ export default function CreateItemModal({ isOpen, onClose, onItemCreated, existi
                         <option>28%</option>
                       </select>
                       <ChevronDown className="absolute right-3 top-2.5 h-4 w-4 text-gray-400 pointer-events-none" />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="mb-2 flex items-center text-sm font-medium text-gray-700 dark:text-gray-300">Discount on Sales Price <Info className="w-4 h-4 ml-1 text-gray-400" /></label>
-                    <div className="flex relative">
-                      <input
-                        type="number"
-                        className="block w-full rounded-l-lg border border-gray-300 bg-white p-2.5 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
-                        placeholder="ex: 12"
-                      />
-                      <span className="inline-flex items-center px-3 rounded-r-lg border border-l-0 border-gray-300 bg-gray-50 text-gray-500 sm:text-sm dark:border-zinc-700 dark:bg-zinc-800">
-                        %
-                      </span>
                     </div>
                   </div>
                 </div>
@@ -524,8 +523,7 @@ export default function CreateItemModal({ isOpen, onClose, onItemCreated, existi
               type="button"
               onClick={(e) => handleSubmit(e, false)}
               disabled={loading}
-              className="rounded-lg bg-indigo-600/10 text-indigo-700 dark:text-indigo-300 dark:bg-indigo-600 px-6 py-2.5 text-sm font-medium transition-colors"
-              style={{ backgroundColor: loading ? '' : '#f5f3ff', color: loading ? '' : '#5b21b6' }} // Light purple matching screenshot
+              className="rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 text-sm font-medium transition-colors shadow-sm"
             >
               {loading ? 'Saving...' : 'Save Item'}
             </button>
