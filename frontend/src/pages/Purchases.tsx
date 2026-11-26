@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Plus, ArrowLeft, Trash2, Tag, FileText, Send } from 'lucide-react';
+import { Search, Plus, ArrowLeft, Trash2, Tag, FileText, Send, Sparkles, Printer } from 'lucide-react';
 import api from '../api';
 import WhatsAppOrderModal from '../components/WhatsAppOrderModal';
+import BillScannerModal from '../components/BillScannerModal';
+import BatchBarcodeModal from '../components/BatchBarcodeModal';
 
 export default function Purchases() {
   const [view, setView] = useState<'list' | 'add'>('list');
@@ -9,6 +11,9 @@ export default function Purchases() {
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
+  const [isBillScannerOpen, setIsBillScannerOpen] = useState(false);
+  const [isBatchBarcodeOpen, setIsBatchBarcodeOpen] = useState(false);
+  const [inwardedItemsForPrint, setInwardedItemsForPrint] = useState<any[]>([]);
   
   // Add Form State
   const [selectedSupplier, setSelectedSupplier] = useState('');
@@ -340,19 +345,26 @@ export default function Purchases() {
     <div className="md:h-full flex flex-col space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Purchase Bills</h2>
-        <div className="flex items-center space-x-3 w-full sm:w-auto">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+          <button 
+            onClick={() => setIsBillScannerOpen(true)}
+            className="flex-1 sm:flex-none flex items-center justify-center px-4 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white rounded-lg text-sm font-bold shadow-md transition-all active:scale-95"
+            title="Upload Wholesaler Bill to Auto-Add Stock & Print Barcodes"
+          >
+            <Sparkles className="mr-2 h-4 w-4" /> AI Inward: Scan Bill
+          </button>
           <button 
             onClick={() => setIsWhatsAppModalOpen(true)}
-            className="flex-1 sm:flex-none flex items-center justify-center px-4 py-2 bg-[#25D366] hover:bg-[#128C7E] text-white rounded-md text-sm font-semibold transition-colors shadow-sm"
+            className="flex-1 sm:flex-none flex items-center justify-center px-3.5 py-2 bg-[#25D366] hover:bg-[#128C7E] text-white rounded-lg text-sm font-semibold transition-colors shadow-sm"
             title="Create WhatsApp Purchase Order to Wholesaler"
           >
-            <Send className="mr-2 h-4 w-4" /> WhatsApp Order
+            <Send className="mr-1.5 h-4 w-4" /> WhatsApp Order
           </button>
           <button 
             onClick={() => setView('add')}
-            className="flex-1 sm:flex-none flex items-center justify-center px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 text-sm font-medium shadow-sm transition-colors"
+            className="flex-1 sm:flex-none flex items-center justify-center px-3.5 py-2 border border-gray-300 dark:border-zinc-700 text-gray-700 dark:text-zinc-200 rounded-lg hover:bg-gray-50 dark:hover:bg-zinc-800 text-sm font-medium transition-colors"
           >
-            <Plus className="mr-2 h-4 w-4" /> Add Purchase Bill
+            <Plus className="mr-1.5 h-4 w-4" /> Manual Bill
           </button>
         </div>
       </div>
@@ -445,6 +457,30 @@ export default function Purchases() {
         isOpen={isWhatsAppModalOpen} 
         onClose={() => setIsWhatsAppModalOpen(false)} 
       />
+
+      {/* AI Inward Bill Scanner Modal */}
+      {isBillScannerOpen && (
+        <BillScannerModal
+          isOpen={isBillScannerOpen}
+          onClose={() => setIsBillScannerOpen(false)}
+          onStockInwarded={(processed) => {
+            fetchBills();
+            if (processed && processed.length > 0) {
+              setInwardedItemsForPrint(processed);
+              setIsBatchBarcodeOpen(true);
+            }
+          }}
+        />
+      )}
+
+      {/* Batch Barcode Printer Modal */}
+      {isBatchBarcodeOpen && (
+        <BatchBarcodeModal
+          isOpen={isBatchBarcodeOpen}
+          onClose={() => setIsBatchBarcodeOpen(false)}
+          items={inwardedItemsForPrint}
+        />
+      )}
     </div>
   );
 }

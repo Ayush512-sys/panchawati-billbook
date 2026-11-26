@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Plus, MoreVertical, Settings, FileText, ChevronDown, HelpCircle, Tag, AlertCircle, ArrowUpDown, TrendingUp, ArrowLeft, Edit, Trash2, Printer, Activity, X, FolderTree, Send, Eye } from 'lucide-react';
+import { Search, Plus, MoreVertical, Settings, FileText, ChevronDown, HelpCircle, Tag, AlertCircle, ArrowUpDown, TrendingUp, ArrowLeft, Edit, Trash2, Printer, Activity, X, FolderTree, Send, Eye, Sparkles } from 'lucide-react';
 import WhatsAppOrderModal from '../components/WhatsAppOrderModal';
+import BillScannerModal from '../components/BillScannerModal';
+import BatchBarcodeModal from '../components/BatchBarcodeModal';
 import { useAuthStore } from '../store/useAuthStore';
 import { useDataStore } from '../store/useDataStore';
 import CreateItemModal from '../components/CreateItemModal';
@@ -25,6 +27,9 @@ export default function Inventory() {
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
   const [whatsAppOrderItems, setWhatsAppOrderItems] = useState<any[]>([]);
+  const [isBillScannerOpen, setIsBillScannerOpen] = useState(false);
+  const [isBatchBarcodeOpen, setIsBatchBarcodeOpen] = useState(false);
+  const [inwardedItemsForPrint, setInwardedItemsForPrint] = useState<any[]>([]);
   const [page, setPage] = useState(1);
   
   // Split view state
@@ -641,29 +646,38 @@ export default function Inventory() {
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white uppercase tracking-tight">Stock Management</h1>
           <p className="text-xs text-gray-500 dark:text-gray-400">Manage spare parts, barcode labels & purchase orders</p>
         </div>
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-2.5">
           <button 
-            className="flex items-center px-4 py-2 bg-[#25D366] hover:bg-[#128C7E] text-white rounded-lg text-sm font-bold transition-colors shadow-sm"
+            onClick={() => setIsBillScannerOpen(true)}
+            className="flex items-center px-4 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white rounded-lg text-sm font-bold shadow-md transition-all active:scale-95"
+            title="Scan purchase bill to auto-add stock & print barcodes"
+          >
+            <Sparkles className="w-4 h-4 mr-1.5" />
+            AI Inward Bill
+          </button>
+
+          <button 
+            className="flex items-center px-3.5 py-2 bg-[#25D366] hover:bg-[#128C7E] text-white rounded-lg text-sm font-bold transition-colors shadow-sm"
             onClick={handleOpenLowStockWhatsAppOrder}
             title="Create WhatsApp Purchase Order for Low Stock"
           >
-            <Send className="w-4 h-4 mr-2" />
+            <Send className="w-4 h-4 mr-1.5" />
             WhatsApp Reorder
           </button>
           
           <button 
-            className="flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold transition-colors shadow-sm"
+            className="flex items-center px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold transition-colors shadow-sm"
             onClick={() => setIsCreateModalOpen(true)}
           >
-            <Plus className="w-4 h-4 mr-2" />
+            <Plus className="w-4 h-4 mr-1.5" />
             Create Item
           </button>
           
           <button 
-            className="flex items-center px-4 py-2 border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 rounded-lg text-sm font-medium transition-colors dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-700 shadow-sm"
+            className="flex items-center px-3.5 py-2 border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 rounded-lg text-sm font-medium transition-colors dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-700 shadow-sm"
             onClick={() => setIsCategoryModalOpen(true)}
           >
-            <FolderTree className="w-4 h-4 mr-2" />
+            <FolderTree className="w-4 h-4 mr-1.5" />
             Categories
           </button>
         </div>
@@ -678,16 +692,23 @@ export default function Inventory() {
           </div>
           <div className="flex items-center space-x-1.5">
             <button 
+              onClick={() => setIsBillScannerOpen(true)}
+              className="flex items-center px-2 py-1.5 bg-gradient-to-r from-indigo-600 to-violet-600 active:scale-95 text-white rounded-lg text-xs font-bold shadow-sm transition-transform"
+              title="Scan Inward Purchase Bill"
+            >
+              <Sparkles className="w-3.5 h-3.5 mr-1" /> Scan
+            </button>
+            <button 
               onClick={handleOpenLowStockWhatsAppOrder}
-              className="flex items-center px-2.5 py-1.5 bg-[#25D366] active:bg-[#128C7E] text-white rounded-lg text-xs font-bold shadow-sm"
+              className="flex items-center px-2 py-1.5 bg-[#25D366] active:bg-[#128C7E] text-white rounded-lg text-xs font-bold shadow-sm"
             >
               <Send className="w-3.5 h-3.5 mr-1" /> Reorder
             </button>
             <button 
               onClick={() => setIsCreateModalOpen(true)}
-              className="flex items-center px-2.5 py-1.5 bg-indigo-600 active:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow-sm"
+              className="flex items-center px-2 py-1.5 bg-indigo-600 active:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow-sm"
             >
-              <Plus className="w-3.5 h-3.5 mr-1" /> Add Item
+              <Plus className="w-3.5 h-3.5 mr-1" /> Add
             </button>
             <button 
               onClick={() => setIsCategoryModalOpen(true)}
@@ -1043,6 +1064,30 @@ export default function Inventory() {
         onClose={() => setIsWhatsAppModalOpen(false)} 
         initialItems={whatsAppOrderItems} 
       />
+
+      {/* AI Inward Bill Scanner Modal */}
+      {isBillScannerOpen && (
+        <BillScannerModal
+          isOpen={isBillScannerOpen}
+          onClose={() => setIsBillScannerOpen(false)}
+          onStockInwarded={(processed) => {
+            fetchData();
+            if (processed && processed.length > 0) {
+              setInwardedItemsForPrint(processed);
+              setIsBatchBarcodeOpen(true);
+            }
+          }}
+        />
+      )}
+
+      {/* Batch Barcode Printer Modal */}
+      {isBatchBarcodeOpen && (
+        <BatchBarcodeModal
+          isOpen={isBatchBarcodeOpen}
+          onClose={() => setIsBatchBarcodeOpen(false)}
+          items={inwardedItemsForPrint}
+        />
+      )}
     </div>
   );
 }
