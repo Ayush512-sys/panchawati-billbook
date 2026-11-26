@@ -5,30 +5,42 @@ import { prisma } from '../index';
 
 export const login = async (req: Request, res: Response) => {
   try {
-    const email = req.body.email || req.body.username;
+    const rawInput = (req.body.email || req.body.username || '').trim();
     const password = req.body.password;
 
-    if (!email || !password) {
+    if (!rawInput || !password) {
       return res.status(400).json({ message: 'Email/Username and password are required' });
     }
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    // Try finding user by exact email, case-insensitive, or username prefix (e.g. "admin" if "admin@panchawati.com")
+    const usernamePrefix = rawInput.includes('@') ? rawInput.split('@')[0] : rawInput;
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: rawInput },
+          { email: rawInput.toLowerCase() },
+          { email: usernamePrefix },
+          { email: usernamePrefix.toLowerCase() }
+        ]
+      }
+    });
+
     if (!user) {
-      return res.status(401).json({ message: 'Invalid credentials' });
+      return res.status(401).json({ message: 'Invalid username or password' });
     }
 
     const isValid = await bcrypt.compare(password, user.password_hash);
     if (!isValid) {
-      return res.status(401).json({ message: 'Invalid credentials' });
+      return res.status(401).json({ message: 'Invalid username or password' });
     }
 
     const token = jwt.sign(
       { id: user.id, role: user.role },
       process.env.JWT_SECRET || 'secret',
-      { expiresIn: '1d' }
+      { expiresIn: '7d' }
     );
 
-    res.json({
+    return res.json({
       token,
       user: {
         id: user.id,
@@ -37,8 +49,12 @@ export const login = async (req: Request, res: Response) => {
         role: user.role
       }
     });
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error });
+  } catch (error: any) {
+    console.error('Login error:', error);
+    return res.status(500).json({ 
+      message: error?.message || 'Database connection error during login',
+      error: error?.name || 'ServerError'
+    });
   }
 };
 
@@ -46,21 +62,14 @@ export const register = async (req: Request, res: Response) => {
   try {
     const { name, email, password, role } = req.body;
     
-    // In a real app, protect this route so only Admin can register users.
-    // For setup, we'll allow it if there are no users yet.
-    
     const userCount = await prisma.user.count();
-    
-    // If users exist and no auth, deny. This is a simplified check.
-    // Ideally this route uses authenticate + requireAdmin middleware.
-
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
       return res.status(400).json({ message: 'Email already in use' });
     }
 
     const password_hash = await bcrypt.hash(password, 10);
-    const userRole = userCount === 0 ? 'Admin' : (role || 'Staff'); // First user is Admin
+    const userRole = userCount === 0 ? 'Admin' : (role || 'Staff');
 
     const user = await prisma.user.create({
       data: {
@@ -71,8 +80,12 @@ export const register = async (req: Request, res: Response) => {
       }
     });
 
-    res.status(201).json({ message: 'User created successfully', userId: user.id });
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error });
+    return res.status(201).json({ message: 'User created successfully', userId: user.id });
+  } catch (error: any) {
+    console.error('Register error:', error);
+    return res.status(500).json({ 
+      message: error?.message || 'Database connection error during registration',
+      error: error?.name || 'ServerError'
+    });
   }
 };

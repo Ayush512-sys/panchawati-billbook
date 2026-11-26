@@ -8,7 +8,16 @@ import { Server } from 'socket.io';
 dotenv.config();
 
 const app = express();
-const prisma = new PrismaClient();
+const DEFAULT_DATABASE_URL = "postgresql://neondb_owner:npg_Qy1lV2ZgqBMd@ep-cool-bonus-ao7a6o3z-pooler.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&pgbouncer=true";
+const dbUrl = process.env.DATABASE_URL || DEFAULT_DATABASE_URL;
+
+const prisma = new PrismaClient({
+  datasources: {
+    db: {
+      url: dbUrl,
+    },
+  },
+});
 const port = process.env.PORT || 5000;
 
 const httpServer = createServer(app);

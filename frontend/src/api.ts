@@ -17,13 +17,18 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Add a response interceptor to handle 401 Unauthorized errors
+// Add a response interceptor to handle 401 Unauthorized errors on protected routes
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    // Only redirect to /login if 401 happened on a protected route, NOT during login itself
     if (error.response?.status === 401) {
-      useAuthStore.getState().logout();
-      window.location.href = '/login';
+      if (!error.config?.url?.includes('/auth/login')) {
+        useAuthStore.getState().logout();
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
+      }
     }
     return Promise.reject(error);
   }
